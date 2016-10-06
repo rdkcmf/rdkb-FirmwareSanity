@@ -1,0 +1,12 @@
+[Unit]
+Description=fscMonitor service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/bin/fscMonitor -LOGFILE /rdklogs/logs/FSC.log &'
+RemainAfterExit=yes
+
+StandardOutput=syslog+console
+
+[Install]
+WantedBy=wan-initialized.target
