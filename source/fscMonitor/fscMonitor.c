@@ -170,7 +170,7 @@ BOOLEAN validXConfResponse()
             FSC_LOG_INFO("XConf reported a firmware name of %s \n", buf);
             isValid = TRUE;
         } else {
-            FSC_LOG_WARN("XConf response exists, but did not respond with a valid firmware image name! \n", buf);
+            FSC_LOG_WARN("XConf response exists, but did not respond with a valid firmware image name! \n");
         }
 
         if (pclose(fp) != 0) {
