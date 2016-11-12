@@ -1,9 +1,10 @@
 [Unit]
 Description=Firmware Sanity Monitor service
+After=logagent.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c '/usr/bin/fscMonitor -LOGFILE /rdklogs/logs/FSC.log &'
+ExecStart=/bin/sh -c '/usr/bin/fscMonitor &'
 RemainAfterExit=yes
 
 StandardOutput=syslog+console

@@ -34,42 +34,34 @@
 #include <string.h>
 #include <stdarg.h>
 
-#include "platform_hal.h"
-
 #define FSC_DEBUG_FILE "/nvram/forceFSC"
 
-FILE* debugLogFile;
+typedef enum {
+    LOG_SEV_ERROR,
+    LOG_SEV_WARN,
+    LOG_SEV_INFO
+} eLogSeverity;
 
+#ifdef FEATURE_SUPPORT_RDKLOG
+#include "ccsp_trace.h"
+char compName[25]="LOG.RDK.FSC";
+#define DEBUG_INI_NAME  "/etc/debug.ini"
+#define FSC_LOG(x, ...) { if((x)==(LOG_SEV_INFO)){CcspTraceInfo((__VA_ARGS__));}else if((x)==(LOG_SEV_WARN)){CcspTraceWarning((__VA_ARGS__));}else if((x)==(LOG_SEV_ERROR)){CcspTraceError((__VA_ARGS__));} }
+#else
 // Log macros
-#define FSC_LOG_INFO(fmt, args...) \
+#define FSC_LOG(x, fmt, args...) \
     { \
         struct tm *gtime; time_t now; \
         char buf[80]; \
         time(&now); gtime = gmtime(&now); \
         strftime(buf,80,"%y%m%d-%H:%M:%S",gtime); \
-        fprintf(debugLogFile, "%s [RDK_LOG_INFO] %s(), " fmt, \
-                buf,__FUNCTION__,##args); fflush(debugLogFile); \
+        fprintf(stderr, "%s [FSC_LOG] %s(), " fmt, \
+                buf,__FUNCTION__,##args); fflush(stderr); \
     }
+#endif
 
-#define FSC_LOG_WARN(fmt,args...) \
-    { \
-        struct tm *gtime; time_t now; \
-        char buf[80]; \
-        time(&now); gtime = gmtime(&now); \
-        strftime(buf,80,"%y%m%d-%H:%M:%S",gtime); \
-        fprintf(debugLogFile, "%s [RDK_LOG_WARN] %s(), " fmt, \
-                buf,__FUNCTION__,##args); fflush(debugLogFile); \
-    }
-
-#define FSC_LOG_ERROR(fmt,args...) \
-    { \
-        struct tm *gtime; time_t now; \
-        char buf[80]; \
-        time(&now); gtime = gmtime(&now); \
-        strftime(buf,80,"%y%m%d-%H:%M:%S",gtime); \
-        fprintf(debugLogFile, "%s [RDK_LOG_ERROR] %s(), " fmt, \
-                buf,__FUNCTION__,##args); fflush(debugLogFile); \
-    }
+// We need to put this after the ccsp_trace.h above, since it re-defines CHAR
+#include "platform_hal.h"
 
 // 60 minute timeout value (in seconds), but we will shift the time by 5 minutes to account for the startup offset.
 #define FSC_TIMEOUT_VALUE 60*60
@@ -110,29 +102,29 @@ BOOLEAN isProductionImage()
     	sprintf(cmd, "cat /version.txt | grep '^imagename' | sed 's/imagename[:=]//' | cut -f2 -d'_'");
     } else {
         // Version file not found, should we mark this as bad?
-        FSC_LOG_ERROR("Error version.txt file not found! \n");
+        FSC_LOG(LOG_SEV_ERROR, "Error version.txt file not found! \n");
         return TRUE;
     }
 
     fp = popen(cmd, "r");
     if (fp == NULL) {
         /* Could not run command should we mark image as bad? */
-    	FSC_LOG_ERROR("Error opening command pipe! \n");
+    	FSC_LOG(LOG_SEV_ERROR, "Error opening command pipe! \n");
     	return TRUE;
     }
 
     fgets(buf, DATA_SIZE, fp);
 
     if ( buf[0] != 0 && strcmp(buf, "PROD") == 0 ) {
-        FSC_LOG_INFO("Production image detected, FSC check active\n");
+        FSC_LOG(LOG_SEV_INFO, "Production image detected, FSC check active\n");
     	isProd = TRUE;
     } else {
-        FSC_LOG_INFO("Debug/VBN image detected\n");
+        FSC_LOG(LOG_SEV_INFO, "Debug/VBN image detected\n");
     }
 
     if (pclose(fp) != 0) {
         /* Error reported by pclose() */
-    	FSC_LOG_ERROR("Error closing command pipe! \n");
+    	FSC_LOG(LOG_SEV_ERROR, "Error closing command pipe! \n");
     }
 
     return isProd;
@@ -160,25 +152,25 @@ BOOLEAN validXConfResponse()
         fp = popen(cmd, "r");
         if (fp == NULL) {
             /* Could not run command mark image as bad? */
-            FSC_LOG_ERROR("Error opening command pipe! \n");
+            FSC_LOG(LOG_SEV_ERROR, "Error opening command pipe! \n");
             return FALSE;
         }
 
         fgets(buf, DATA_SIZE, fp);
 
         if (buf[0] != 0 && strlen(buf) > 0) {
-            FSC_LOG_INFO("XConf reported a firmware name of %s \n", buf);
+            FSC_LOG(LOG_SEV_INFO, "XConf reported a firmware name of %s \n", buf);
             isValid = TRUE;
         } else {
-            FSC_LOG_WARN("XConf response exists, but did not respond with a valid firmware image name! \n");
+            FSC_LOG(LOG_SEV_WARN, "XConf response exists, but did not respond with a valid firmware image name! \n");
         }
 
         if (pclose(fp) != 0) {
             /* Error reported by pclose() */
-            FSC_LOG_ERROR("Error closing command pipe! \n");
+            FSC_LOG(LOG_SEV_ERROR, "Error closing command pipe! \n");
         }
 	} else {
-        FSC_LOG_WARN("Xconf response file does not exist yet, xconf has not responded \n");
+        FSC_LOG(LOG_SEV_WARN, "Xconf response file does not exist yet, xconf has not responded \n");
 	}
 
     return isValid;
@@ -209,44 +201,31 @@ static double TimeSpecToSeconds(struct timespec* ts)
     return (double)ts->tv_sec + (double)ts->tv_nsec / 1000000000.0;
 }
 
+
 /*
  * Main routine
  */
 int main(int argc, char* argv[])
 {
-    debugLogFile = stderr;
     BOOLEAN bValidImage = FALSE;
 
     struct timespec t1, t2;
     double elapsedTime;
 
-    int idx = 0;
-    for (idx = 0; idx < argc; idx++)
-    {
-        if ( (strcmp(argv[idx], "-LOGFILE") == 0) )
-        {
-            // We assume argv[1] is a filename to open
-            debugLogFile = fopen( argv[idx + 1], "a+" );
+#ifdef FEATURE_SUPPORT_RDKLOG
+    pComponentName = compName;
+    rdk_logger_init(DEBUG_INI_NAME);
+#endif
 
-            /* fopen returns 0, the NULL pointer, on failure */
-            if ( debugLogFile == 0 )
-            {
-                debugLogFile = stderr;
-                FSC_LOG_WARN("Invalid Entry for -LOGFILE input \n");
-            }
-            else
-            {
-                FSC_LOG_INFO("Log File [%s] Opened for Writing in Append Mode \n", argv[idx+1]);
-            }
-        }
-    }
+    FSC_LOG(LOG_SEV_INFO, "Started power manager\n");
+
 
     // Tell the hal what the image validation expiry time is.
     platform_hal_SetDeviceCodeImageTimeout(FSC_TIMEOUT_VALUE);
 
     // Check to see if we have our debug override file in place
     if ((bDebugOverride = doesFileExist(FSC_DEBUG_FILE))) {
-        FSC_LOG_INFO("Debug override file /nvram/forceFSC exists, forcing FSC check\n");
+        FSC_LOG(LOG_SEV_INFO, "Debug override file /nvram/forceFSC exists, forcing FSC check\n");
     }
 
     // Check to see if this is a production image
@@ -257,7 +236,7 @@ int main(int argc, char* argv[])
     } else {
         // get start time
         clock_gettime(CLOCK_MONOTONIC, &t1);
-        FSC_LOG_INFO("Starting Firmware Sanity Checker Process...\n");
+        FSC_LOG(LOG_SEV_INFO, "Starting Firmware Sanity Checker Process...\n");
     }
 
     while(!bValidImage)
@@ -269,14 +248,14 @@ int main(int argc, char* argv[])
         // compute the elapsed time in seconds
         elapsedTime = TimeSpecToSeconds(&t2) - TimeSpecToSeconds(&t1);
 
-        // FSC_LOG_INFO("Test for valid XConf response at %f seconds \n", elapsedTime);
+        // FSC_LOG(LOG_SEV_INFO, "Test for valid XConf response at %f seconds \n", elapsedTime);
 
         // Check to see if we have a valid xconf connection.
         if (!(bValidImage = checkXconfValid()))
         {
             if (elapsedTime >= (double) (FSC_TIMEOUT_VALUE - timeOffset)) // adjust expiry time by 5 minutes
             {
-                FSC_LOG_INFO("Time expired waiting for valid xconf connection \n");
+                FSC_LOG(LOG_SEV_INFO, "Time expired waiting for valid xconf connection \n");
                 // If we got here our time is expired without getting an xconf connection - fall out and fail
                 break;
             }
@@ -286,11 +265,7 @@ int main(int argc, char* argv[])
     // call the platform hal to tell them if this image is valid or not.
     platform_hal_SetDeviceCodeImageValid(bValidImage);
 
-    FSC_LOG_INFO("Firmware Sanity Checker Exit with valid image: %s\n", (bValidImage?"true":"false"));
-    if(debugLogFile)
-    {
-        fclose(debugLogFile);
-    }
+    FSC_LOG(LOG_SEV_INFO, "Firmware Sanity Checker Exit with valid image: %s\n", (bValidImage?"true":"false"));
 
     return 0;
 }
